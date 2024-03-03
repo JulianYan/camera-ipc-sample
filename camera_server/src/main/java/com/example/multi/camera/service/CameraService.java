@@ -17,7 +17,9 @@ import android.hardware.camera2.CameraCaptureSession;
 import android.hardware.camera2.CameraCharacteristics;
 import android.hardware.camera2.CameraDevice;
 import android.hardware.camera2.CameraManager;
+import android.hardware.camera2.CaptureFailure;
 import android.hardware.camera2.CaptureRequest;
+import android.hardware.camera2.TotalCaptureResult;
 import android.os.Handler;
 import android.os.HandlerThread;
 import android.os.IBinder;
@@ -26,6 +28,7 @@ import android.util.Log;
 import android.util.Range;
 import android.view.Surface;
 
+import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.core.app.ActivityCompat;
 import androidx.core.app.NotificationCompat;
@@ -37,7 +40,7 @@ import java.util.Arrays;
  * Created by Xin Xiao on 2022/8/17
  */
 public class CameraService extends Service {
-    private final String TAG = "CameraService";
+    private final String TAG = "CameraForegroundService";
     private HandlerThread mCameraThread;
     private Handler mCameraHandler;
 
@@ -200,7 +203,19 @@ public class CameraService extends Service {
                         mCaptureRequest = mPreviewBuilder.build();
                         mPreviewSession = session;
                         //不停的发送获取图像请求，完成连续预览
-                        mPreviewSession.setRepeatingRequest(mCaptureRequest, null, mCameraHandler);
+                        mPreviewSession.setRepeatingRequest(mCaptureRequest, new CameraCaptureSession.CaptureCallback() {
+                            @Override
+                            public void onCaptureCompleted(@NonNull CameraCaptureSession session, @NonNull CaptureRequest request, @NonNull TotalCaptureResult result) {
+                                super.onCaptureCompleted(session, request, result);
+                                Log.i(TAG, "onCaptureCompleted: ");
+                            }
+
+                            @Override
+                            public void onCaptureFailed(@NonNull CameraCaptureSession session, @NonNull CaptureRequest request, @NonNull CaptureFailure failure) {
+                                super.onCaptureFailed(session, request, failure);
+                                Log.i(TAG, "onCaptureFailed: ");
+                            }
+                        }, mCameraHandler);
                     } catch (Exception e) {
                         e.printStackTrace();
                     }
@@ -253,5 +268,11 @@ public class CameraService extends Service {
     @Override
     public ComponentName startForegroundService(Intent service) {
         return super.startForegroundService(service);
+    }
+
+    @Override
+    public void onDestroy() {
+        Log.i(TAG, "onDestroy: ");
+        super.onDestroy();
     }
 }
