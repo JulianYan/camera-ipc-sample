@@ -1,10 +1,17 @@
 package com.example.multi.camera.service;
 
+import static androidx.core.app.NotificationCompat.PRIORITY_MIN;
+
 import android.Manifest;
+import android.app.Notification;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
 import android.app.Service;
+import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.content.pm.ServiceInfo;
 import android.hardware.camera2.CameraAccessException;
 import android.hardware.camera2.CameraCaptureSession;
 import android.hardware.camera2.CameraCharacteristics;
@@ -21,6 +28,8 @@ import android.view.Surface;
 
 import androidx.annotation.Nullable;
 import androidx.core.app.ActivityCompat;
+import androidx.core.app.NotificationCompat;
+import androidx.core.app.ServiceCompat;
 
 import java.util.Arrays;
 
@@ -42,14 +51,37 @@ public class CameraService extends Service {
     private Range<Integer>[] fpsRanges;
 
     private Surface mSurface;
+    public static final String cameraForegroundService = "CameraForegroundService";
 
     @Override
     public void onCreate() {
+        Log.i(TAG, "onCreate: ");
         super.onCreate();
+        NotificationChannel channel = new NotificationChannel(cameraForegroundService, TAG, NotificationManager.IMPORTANCE_NONE);
+        NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+        String channelId = "com.example.multi.camera.service";
+        String notificationChannel = createNotificationChannel(channelId, cameraForegroundService);
+        NotificationCompat.Builder builder = new NotificationCompat.Builder(this, channelId);
+        Notification notification = builder.setOngoing(true)
+                .setSmallIcon(R.mipmap.ic_launcher)
+                .setPriority(PRIORITY_MIN)
+                .setCategory(Notification.CATEGORY_SERVICE)
+                .build();
+        int type = ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA;
+        startForeground(100, notification, type);
         mCameraThread = new HandlerThread("CameraServerThread");
         mCameraThread.start();
         mCameraHandler = new Handler(mCameraThread.getLooper());
         setupCamera();//配置相机参数
+    }
+
+    private String createNotificationChannel(String channelId, String channelName){
+        NotificationChannel chan = new NotificationChannel(channelId,
+                channelName, NotificationManager.IMPORTANCE_NONE);
+        chan.setLockscreenVisibility(Notification.VISIBILITY_PRIVATE);
+        NotificationManager service = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+        service.createNotificationChannel(chan);
+        return channelId;
     }
 
     @Nullable
@@ -215,5 +247,11 @@ public class CameraService extends Service {
             e.printStackTrace();
             Log.e(TAG, "stopCamera failed:" + e.toString());
         }
+    }
+
+    @Nullable
+    @Override
+    public ComponentName startForegroundService(Intent service) {
+        return super.startForegroundService(service);
     }
 }

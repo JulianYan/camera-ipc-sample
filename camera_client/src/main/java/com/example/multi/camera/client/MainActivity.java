@@ -57,8 +57,8 @@ public class MainActivity extends AppCompatActivity {
                 Intent intent = new Intent();
                 intent.setAction("com.example.camera.aidl");
                 intent.setPackage("com.example.multi.camera.service");
-                bindService(intent, mConnection, Context.BIND_AUTO_CREATE);
-                Log.d(TAG, "bindService");
+                boolean ret = bindService(intent, mConnection, Context.BIND_AUTO_CREATE);
+                Log.d(TAG, "bindService" + ret);
                 //更新视图
                 mPreview.setVisibility(View.VISIBLE);
                 mPreviewIsOff.setVisibility(View.INVISIBLE);
