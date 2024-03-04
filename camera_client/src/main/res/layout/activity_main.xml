@@ -4,10 +4,15 @@
     android:layout_height="match_parent"
     android:background="@android:color/black">
 
-    <ImageView
+<!--    <ImageView-->
+<!--        android:id="@+id/preview"-->
+<!--        android:layout_width="match_parent"-->
+<!--        android:layout_height="match_parent" />-->
+
+    <SurfaceView
         android:id="@+id/preview"
         android:layout_width="match_parent"
-        android:layout_height="match_parent" />
+        android:layout_height="match_parent"/>
 
     <TextView
         android:id="@+id/preview_is_off"

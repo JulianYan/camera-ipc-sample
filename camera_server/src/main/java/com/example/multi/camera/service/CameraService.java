@@ -12,6 +12,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.content.pm.ServiceInfo;
+import android.graphics.ImageFormat;
 import android.hardware.camera2.CameraAccessException;
 import android.hardware.camera2.CameraCaptureSession;
 import android.hardware.camera2.CameraCharacteristics;
@@ -20,12 +21,20 @@ import android.hardware.camera2.CameraManager;
 import android.hardware.camera2.CaptureFailure;
 import android.hardware.camera2.CaptureRequest;
 import android.hardware.camera2.TotalCaptureResult;
+import android.hardware.camera2.params.OutputConfiguration;
+import android.hardware.camera2.params.RecommendedStreamConfigurationMap;
+import android.hardware.camera2.params.SessionConfiguration;
+import android.hardware.camera2.params.StreamConfigurationMap;
+import android.media.Image;
+import android.media.ImageReader;
+import android.media.ImageWriter;
 import android.os.Handler;
 import android.os.HandlerThread;
 import android.os.IBinder;
 import android.os.RemoteException;
 import android.util.Log;
 import android.util.Range;
+import android.util.Size;
 import android.view.Surface;
 
 import androidx.annotation.NonNull;
@@ -34,12 +43,20 @@ import androidx.core.app.ActivityCompat;
 import androidx.core.app.NotificationCompat;
 import androidx.core.app.ServiceCompat;
 
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Comparator;
+import java.util.List;
+import java.util.Optional;
+import java.util.Set;
+import java.util.concurrent.Executor;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Created by Xin Xiao on 2022/8/17
  */
 public class CameraService extends Service {
+    private static final int MAX_IMAGES = 3;
     private final String TAG = "CameraForegroundService";
     private HandlerThread mCameraThread;
     private Handler mCameraHandler;
@@ -51,19 +68,22 @@ public class CameraService extends Service {
     private CaptureRequest mCaptureRequest;
     private CameraCaptureSession mPreviewSession;
     private CameraCharacteristics characteristics;
-    private Range<Integer>[] fpsRanges;
-
     private Surface mSurface;
     public static final String cameraForegroundService = "CameraForegroundService";
+    private Range<Integer> fpsRange;
+    private RecommendedStreamConfigurationMap recommendedStreamConfigurationMap;
+    private Size mPreviewSize;
+    private ImageReader mImageReader;
+    private ImageWriter mImageWriter;
+    AtomicInteger mCounter = new AtomicInteger(MAX_IMAGES);
+
 
     @Override
     public void onCreate() {
         Log.i(TAG, "onCreate: ");
         super.onCreate();
-        NotificationChannel channel = new NotificationChannel(cameraForegroundService, TAG, NotificationManager.IMPORTANCE_NONE);
-        NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
         String channelId = "com.example.multi.camera.service";
-        String notificationChannel = createNotificationChannel(channelId, cameraForegroundService);
+        createNotificationChannel(channelId, cameraForegroundService);
         NotificationCompat.Builder builder = new NotificationCompat.Builder(this, channelId);
         Notification notification = builder.setOngoing(true)
                 .setSmallIcon(R.mipmap.ic_launcher)
@@ -78,13 +98,12 @@ public class CameraService extends Service {
         setupCamera();//配置相机参数
     }
 
-    private String createNotificationChannel(String channelId, String channelName){
+    private void createNotificationChannel(String channelId, String channelName){
         NotificationChannel chan = new NotificationChannel(channelId,
                 channelName, NotificationManager.IMPORTANCE_NONE);
         chan.setLockscreenVisibility(Notification.VISIBILITY_PRIVATE);
         NotificationManager service = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
         service.createNotificationChannel(chan);
-        return channelId;
     }
 
     @Nullable
@@ -121,9 +140,23 @@ public class CameraService extends Service {
             mCameraId = manager.getCameraIdList()[0];
 
             characteristics = manager.getCameraCharacteristics(mCameraId);
-            fpsRanges = characteristics.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES);
-            Log.d(TAG, "fpsRanges: " + Arrays.toString(fpsRanges));
-            //fpsRanges: [[15, 15], [20, 20], [24, 24], [5, 30], [30, 30]]
+            StreamConfigurationMap configurationMap = characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP);
+            Size[] outputSizes = configurationMap.getOutputSizes(ImageFormat.YUV_420_888);
+            Log.i(TAG, "setupCamera: " + outputSizes);
+            Optional<Size> previewSizeOpt = Arrays.stream(outputSizes).filter(size -> Math.abs(size.getWidth() / (float) size.getHeight() - 4 / 3f) <= 0.01f)
+                    .min(Comparator.comparingInt(size -> Math.abs(size.getWidth() * size.getHeight() - 1440 * 1080)));
+            Range<Integer>[] fpsRanges = characteristics.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES);
+            Optional<Range<Integer>> fpsRangeOpt = Arrays.stream(fpsRanges).max((range1, range2) -> {
+                int upper = range1.getUpper() - range2.getUpper();
+                if (upper == 0) {
+                    return range2.getLower() - range1.getLower();
+                } else {
+                    return upper;
+                }
+            });
+            fpsRange = fpsRangeOpt.orElse(new Range<>(30, 30));
+            mPreviewSize = previewSizeOpt.orElse(new Size(640, 480));
+            Log.d(TAG, "fpsRange: " + fpsRange + ",size=" + mPreviewSize);
         } catch (Exception e) {
             e.printStackTrace();
             Log.d(TAG, "setupCamera failed: " + e.toString());
@@ -186,15 +219,39 @@ public class CameraService extends Service {
         try {
             closePreviewSession();
             mPreviewBuilder = mCameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW);//创建CaptureRequestBuilder，TEMPLATE_PREVIEW表示预览请求
-            mPreviewBuilder.addTarget(mSurface);//设置Surface作为预览数据的显示界面
-
             //默认预览不开启闪光灯
+            mPreviewBuilder.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON);
             mPreviewBuilder.set(CaptureRequest.FLASH_MODE, CaptureRequest.FLASH_MODE_OFF);
+            mPreviewBuilder.set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE);
+            mPreviewBuilder.set(CaptureRequest.CONTROL_AWB_MODE, CaptureRequest.CONTROL_AWB_MODE_AUTO);
             //设置预览画面的帧率
-            mPreviewBuilder.set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, fpsRanges[0]);
+            mPreviewBuilder.set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, fpsRange);
 
-            //创建相机捕获会话，第一个参数是捕获数据的输出Surface列表，第二个参数是CameraCaptureSession的状态回调接口，当它创建好后会回调onConfigured方法，第三个参数用来确定Callback在哪个线程执行，为null的话就在当前线程执行
-            mCameraDevice.createCaptureSession(Arrays.asList(mSurface), new CameraCaptureSession.StateCallback() {
+
+            List<OutputConfiguration> outputs = new ArrayList<>();
+            if (mImageReader != null) {
+                mImageReader.close();
+            }
+            mImageReader = ImageReader.newInstance(mPreviewSize.getWidth(), mPreviewSize.getHeight(), ImageFormat.YUV_420_888, MAX_IMAGES);
+
+            mPreviewBuilder.addTarget(mImageReader.getSurface());//设置Surface作为预览数据的显示界面
+
+            mImageReader.setOnImageAvailableListener(reader -> {
+                Image image = reader.acquireLatestImage();
+                if (image != null && mImageWriter != null) {
+                    int i = mCounter.get();
+                    Log.i(TAG, "onImageAvailable: imwriter buffer=" + i);
+                    if (i > 0) {
+                        mCounter.decrementAndGet();
+                        mImageWriter.queueInputImage(image);
+                    } else {
+                        image.close();
+                    }
+                }
+            }, mCameraHandler);
+            outputs.add(new OutputConfiguration(mImageReader.getSurface()));
+
+            SessionConfiguration sc = new SessionConfiguration(SessionConfiguration.SESSION_REGULAR, outputs, command -> mCameraHandler.post(command), new CameraCaptureSession.StateCallback() {
                 @Override
                 public void onConfigured(CameraCaptureSession session) {
                     Log.d(TAG, "onConfigured");
@@ -202,6 +259,14 @@ public class CameraService extends Service {
                         //创建捕获请求
                         mCaptureRequest = mPreviewBuilder.build();
                         mPreviewSession = session;
+                        if (mImageWriter != null) {
+                            mImageWriter.close();
+                        }
+                        mImageWriter = ImageWriter.newInstance(mSurface, MAX_IMAGES);
+                        mImageWriter.setOnImageReleasedListener(writer -> {
+                            int i = mCounter.incrementAndGet();
+                            Log.i(TAG, "onImageReleased: imwriter buffer=" + i);
+                        }, mCameraHandler);
                         //不停的发送获取图像请求，完成连续预览
                         mPreviewSession.setRepeatingRequest(mCaptureRequest, new CameraCaptureSession.CaptureCallback() {
                             @Override
@@ -225,7 +290,9 @@ public class CameraService extends Service {
                 public void onConfigureFailed(CameraCaptureSession session) {
 
                 }
-            }, mCameraHandler);
+            });
+            mCameraDevice.createCaptureSession(sc);
+
         } catch (Exception e) {
             e.printStackTrace();
             Log.e(TAG, "startPreview failed:" + e.toString());
