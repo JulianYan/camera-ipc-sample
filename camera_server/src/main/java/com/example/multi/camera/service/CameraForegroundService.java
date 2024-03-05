@@ -41,24 +41,20 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.core.app.ActivityCompat;
 import androidx.core.app.NotificationCompat;
-import androidx.core.app.ServiceCompat;
 
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
-import java.util.Set;
-import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Created by Xin Xiao on 2022/8/17
  */
-public class CameraService extends Service {
+public class CameraForegroundService extends Service {
     private static final int MAX_IMAGES = 3;
     private final String TAG = "CameraForegroundService";
-    private HandlerThread mCameraThread;
     private Handler mCameraHandler;
 
     //Camera2
@@ -69,22 +65,21 @@ public class CameraService extends Service {
     private CameraCaptureSession mPreviewSession;
     private CameraCharacteristics characteristics;
     private Surface mSurface;
-    public static final String cameraForegroundService = "CameraForegroundService";
     private Range<Integer> fpsRange;
     private RecommendedStreamConfigurationMap recommendedStreamConfigurationMap;
     private Size mPreviewSize;
     private ImageReader mImageReader;
     private ImageWriter mImageWriter;
     AtomicInteger mCounter = new AtomicInteger(MAX_IMAGES);
-
+    public static final String CHANNEL_ID = "com.example.multi.camera.service.CameraForegroundService";
+    public static final String CHANNEL_NAME = "CameraForegroundService";
 
     @Override
     public void onCreate() {
         Log.i(TAG, "onCreate: ");
         super.onCreate();
-        String channelId = "com.example.multi.camera.service";
-        createNotificationChannel(channelId, cameraForegroundService);
-        NotificationCompat.Builder builder = new NotificationCompat.Builder(this, channelId);
+        createNotificationChannel(CHANNEL_ID, CHANNEL_NAME);
+        NotificationCompat.Builder builder = new NotificationCompat.Builder(this, CHANNEL_ID);
         Notification notification = builder.setOngoing(true)
                 .setSmallIcon(R.mipmap.ic_launcher)
                 .setPriority(PRIORITY_MIN)
@@ -92,7 +87,7 @@ public class CameraService extends Service {
                 .build();
         int type = ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA;
         startForeground(100, notification, type);
-        mCameraThread = new HandlerThread("CameraServerThread");
+        HandlerThread mCameraThread = new HandlerThread("CameraServerThread");
         mCameraThread.start();
         mCameraHandler = new Handler(mCameraThread.getLooper());
         setupCamera();//配置相机参数
@@ -142,7 +137,7 @@ public class CameraService extends Service {
             characteristics = manager.getCameraCharacteristics(mCameraId);
             StreamConfigurationMap configurationMap = characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP);
             Size[] outputSizes = configurationMap.getOutputSizes(ImageFormat.YUV_420_888);
-            Log.i(TAG, "setupCamera: " + outputSizes);
+            Log.i(TAG, "setupCamera: " + Arrays.toString(outputSizes));
             Optional<Size> previewSizeOpt = Arrays.stream(outputSizes).filter(size -> Math.abs(size.getWidth() / (float) size.getHeight() - 4 / 3f) <= 0.01f)
                     .min(Comparator.comparingInt(size -> Math.abs(size.getWidth() * size.getHeight() - 1440 * 1080)));
             Range<Integer>[] fpsRanges = characteristics.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES);

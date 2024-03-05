@@ -27,7 +27,7 @@
         </activity>
 
         <service
-            android:name=".CameraService"
+            android:name=".CameraForegroundService"
             android:foregroundServiceType="camera"
             android:stopWithTask="false"
             android:enabled="true"
